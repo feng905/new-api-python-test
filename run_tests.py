@@ -362,49 +362,49 @@ def test_error():
     print("\n[4/5] 异常容错测试")
     s = make_client(VALID_TOKEN)
 
-    cases = [
-            ("超大输入1M字符返回400/413",
-            lambda: s.post("{}/v1/chat/completions".format(BASE_URL),
-                        json={"model": "gpt-3.5-turbo",
-                                "messages": [{"role": "user",
-                                            "content": "a" * 1000000}]},
-                        timeout=TIMEOUT_LARGE*10),
-            lambda r: r.status_code in (400, 413, 422, 502)),      
-    ]
-
     # cases = [
-    #     ("不存在模型返回400/404",
-    #      lambda: s.post("{}/v1/chat/completions".format(BASE_URL),
-    #                   json={"model": "nonexistent-model-xyz",
-    #                         "messages": [{"role": "user", "content": "hi"}]},
-    #                   timeout=TIMEOUT_NORMAL),
-    #      lambda r: r.status_code in (400, 404, 422)),
-    #     ("messages为空返回400",
-    #      lambda: s.post("{}/v1/chat/completions".format(BASE_URL),
-    #                   json={"model": "gpt-3.5-turbo", "messages": []},
-    #                   timeout=TIMEOUT_NORMAL),
-    #      lambda r: r.status_code in (400, 422)),
-    #     ("非法JSON返回400",
-    #      lambda: s.post("{}/v1/chat/completions".format(BASE_URL),
-    #                   data="{invalid json}",
-    #                   headers={"Content-Type": "application/json"},
-    #                   timeout=TIMEOUT_NORMAL),
-    #      lambda r: r.status_code in (400, 422)),
-    #     ("超大输入1M字符返回400/413",
-    #      lambda: s.post("{}/v1/chat/completions".format(BASE_URL),
-    #                   json={"model": "gpt-3.5-turbo",
-    #                         "messages": [{"role": "user",
-    #                                       "content": "a" * 1000000}]},
-    #                   timeout=TIMEOUT_LARGE*10),
-    #      lambda r: r.status_code in (400, 413, 422, 502)),
-    #     ("无Authorization返回401/403",
-    #      lambda: requests.post(
-    #          "{}/v1/chat/completions".format(BASE_URL),
-    #          json={"model": "gpt-3.5-turbo",
-    #                "messages": [{"role": "user", "content": "hi"}]},
-    #          timeout=TIMEOUT_NORMAL),
-    #      lambda r: r.status_code in (401, 403)),
+    #         ("超大输入1M字符返回400/413",
+    #         lambda: s.post("{}/v1/chat/completions".format(BASE_URL),
+    #                     json={"model": "gpt-3.5-turbo",
+    #                             "messages": [{"role": "user",
+    #                                         "content": "a" * 1000000}]},
+    #                     timeout=TIMEOUT_LARGE*10),
+    #         lambda r: r.status_code in (400, 413, 422, 502)),      
     # ]
+
+    cases = [
+        ("不存在模型返回400/404",
+         lambda: s.post("{}/v1/chat/completions".format(BASE_URL),
+                      json={"model": "nonexistent-model-xyz",
+                            "messages": [{"role": "user", "content": "hi"}]},
+                      timeout=TIMEOUT_NORMAL),
+         lambda r: r.status_code in (400, 404, 422)),
+        ("messages为空返回400",
+         lambda: s.post("{}/v1/chat/completions".format(BASE_URL),
+                      json={"model": "gpt-3.5-turbo", "messages": []},
+                      timeout=TIMEOUT_NORMAL),
+         lambda r: r.status_code in (400, 422)),
+        ("非法JSON返回400",
+         lambda: s.post("{}/v1/chat/completions".format(BASE_URL),
+                      data="{invalid json}",
+                      headers={"Content-Type": "application/json"},
+                      timeout=TIMEOUT_NORMAL),
+         lambda r: r.status_code in (400, 422)),
+        ("超大输入1M字符返回400/413",
+         lambda: s.post("{}/v1/chat/completions".format(BASE_URL),
+                      json={"model": "gpt-3.5-turbo",
+                            "messages": [{"role": "user",
+                                          "content": "a" * 1000000}]},
+                      timeout=TIMEOUT_LARGE*10),
+         lambda r: r.status_code in (400, 413, 422, 502)),
+        ("无Authorization返回401/403",
+         lambda: requests.post(
+             "{}/v1/chat/completions".format(BASE_URL),
+             json={"model": "gpt-3.5-turbo",
+                   "messages": [{"role": "user", "content": "hi"}]},
+             timeout=TIMEOUT_NORMAL),
+         lambda r: r.status_code in (401, 403)),
+    ]
 
     for name, req_fn, check_fn in cases:
         t0 = time.time()
@@ -551,11 +551,11 @@ if __name__ == "__main__":
     print("=" * 60)
 
     t0 = time.time()
-    # test_auth()
-    # test_protocol()
-    # test_stability()
+    test_auth()
+    test_protocol()
+    test_stability()
     test_error()
-    # test_request_id()
+    test_request_id()
     elapsed = (time.time() - t0) * 1000
 
     print_summary()
