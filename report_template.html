@@ -1,0 +1,108 @@
+<!-- new-api-autotest HTML 报告模板 -->
+<!-- 由 generate_report.py 渲染 -->
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>{{ title }}</title>
+<style>
+body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;margin:0;background:#e8eaed;color:#202124;}}
+.header{{background:linear-gradient(135deg,#4285f4,#1a73e8);color:white;padding:32px 40px;}}
+.header h1{{margin:0;font-size:26px;}}
+.header p{{margin:4px 0 0;opacity:0.9;font-size:14px;}}
+.container{{max-width:1200px;margin:0 auto;padding:24px;}}
+.summary{{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:32px;}}
+.card{{background:white;border-radius:12px;padding:20px;box-shadow:0 1px 3px rgba(0,0,0,0.1);}}
+.card h3{{margin:0 0 8px;font-size:13px;color:#5f6368;}}
+.card .num{{font-size:36px;font-weight:700;}}
+.card .num.green{{color:#34a853;}}
+.card .num.orange{{color:#fbbc04;}}
+.card .num.red{{color:#ea4335;}}
+.card .sub{{font-size:12px;color:#80868b;margin-top:4px;}}
+.suite{{background:white;border-radius:12px;margin-bottom:24px;box-shadow:0 1px 3px rgba(0,0,0,0.1);overflow:hidden;}}
+.suite-header{{display:flex;align-items:center;padding:16px 24px;border-bottom:1px solid #e8eaed;}}
+.suite-header h2{{margin:0;font-size:16px;flex:1;}}
+.suite-header .score{{font-size:14px;color:#5f6368;}}
+.suite-header .score span{{font-weight:700;}}
+.bar-bg{{height:6px;border-radius:3px;background:#e8eaed;margin-top:8px;width:200px;display:inline-block;vertical-align:middle;margin-left:8px;}}
+.bar-fill{{height:100%;border-radius:3px;}}
+.bar-fill.green{{background:#34a853;}}
+.bar-fill.orange{{background:#fbbc04;}}
+.bar-fill.red{{background:#ea4335;}}
+table{{width:100%;border-collapse:collapse;}}
+th{{background:#f8f9fa;padding:10px 16px;text-align:left;font-size:12px;color:#5f6368;font-weight:600;border-bottom:1px solid #e8eaed;}}
+td{{padding:12px 16px;border-bottom:1px solid #f1f3f4;font-size:13px;vertical-align:top;}}
+tr:hover{{background:#f8f9fa;}}
+.badge{{display:inline-block;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600;}}
+.badge.ok{{background:#e6f4ea;color:#137333;}}
+.badge.fail{{background:#fce8e6;color:#c5221f;}}
+.detail{{color:#5f6368;font-size:12px;max-width:400px;word-break:break-all;}}
+.meta{{background:white;border-radius:12px;padding:20px;margin-bottom:24px;box-shadow:0 1px 3px rgba(0,0,0,0.1);font-size:13px;color:#5f6368;line-height:1.8;}}
+.meta strong{{color:#202124;}}
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>{{ title }}</h1>
+  <p>{{ timestamp }} | {{ base_url }}</p>
+</div>
+<div class="container">
+  <div class="meta">
+    <strong>被测系统：</strong>{{ base_url }}<br>
+    <strong>数据库：</strong>{{ db_path }}<br>
+    <strong>测试Token：</strong>{{ token_preview }}<br>
+    <strong>通过率：</strong>{{ "{:.1%}".format(pass_rate) }} ({{ pass_count }}/{{ total_count }})
+  </div>
+  <div class="summary">
+    <div class="card">
+      <h3>总通过率</h3>
+      <div class="num {{ 'green' if pass_rate >= 0.9 else ('orange' if pass_rate >= 0.6 else 'red') }}">{{ "{:.1%}".format(pass_rate) }}</div>
+      <div class="sub">{{ pass_count }}/{{ total_count }} 项通过</div>
+      <div class="bar-bg"><div class="bar-fill {{ 'green' if pass_rate >= 0.9 else ('orange' if pass_rate >= 0.6 else 'red') }}" style="width:{{ pass_rate*100 }}%"></div></div>
+    </div>
+    <div class="card">
+      <h3>总分</h3>
+      <div class="num {{ 'green' if total_score/total_max >= 0.9 else ('orange' if total_score/total_max >= 0.6 else 'red') }}">{{ "{:.1f}".format(total_score) }} / {{ "{:.1f}".format(total_max) }}</div>
+      <div class="sub">满分 {{ "{:.1f}".format(total_max) }}</div>
+    </div>
+    <div class="card">
+      <h3>测试套件</h3>
+      <div class="num" style="color:#4285f4;">{{ suite_count }}</div>
+      <div class="sub">个测试维度</div>
+    </div>
+    <div class="card">
+      <h3>总耗时</h3>
+      <div class="num" style="color:#202124;">{{ "{:.1f}".format(total_duration_ms/1000) }}s</div>
+      <div class="sub">&nbsp;</div>
+    </div>
+  </div>
+
+  {% for suite in suites %}
+  <div class="suite">
+    <div class="suite-header">
+      <h2>{{ suite.category }}</h2>
+      <div class="score">
+        得分 <span>{{ "{:.1f}".format(suite.total_score) }}</span> / {{ "{:.1f}".format(suite.max_score) }}
+        <div class="bar-bg"><div class="bar-fill {{ 'green' if suite.pass_rate >= 0.9 else ('orange' if suite.pass_rate >= 0.6 else 'red') }}" style="width:{{ suite.pass_rate*100 }}%"></div></div>
+      </div>
+    </div>
+    <table>
+      <tr><th>状态</th><th>测试用例</th><th>得分</th><th>详情</th><th>耗时(ms)</th><th>Request ID</th></tr>
+      {% for r in suite.results %}
+      <tr>
+        <td><span class="badge {{ 'ok' if r.passed else 'fail' }}">{{ '✅' if r.passed else '❌' }}</span></td>
+        <td><strong>{{ r.name }}</strong></td>
+        <td>{{ "{:.1f}".format(r.score) }} / {{ "{:.1f}".format(r.max_score) }}</td>
+        <td class="detail">{{ r.detail }}</td>
+        <td>{{ "{:.0f}".format(r.duration_ms) if r.duration_ms else "-" }}</td>
+        <td style="font-size:11px;color:#80868b;">{{ r.request_id[:24] if r.request_id else "-" }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+  </div>
+  {% endfor %}
+
+  <div style="text-align:center;color:#80868b;font-size:12px;padding:24px;">由 new-api-autotest 自动生成 · {{ timestamp }}</div>
+</div>
+</body>
+</html>
