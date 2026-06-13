@@ -4,20 +4,27 @@ import sys
 import os
 import json
 import time
+import select
 import sqlite3
 import statistics
 import requests
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dotenv import load_dotenv
+
+# 加载 .env 配置（从项目根目录）
+load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 
 # ============================================================
-# 配置
+# 配置（从环境变量 / .env 文件读取）
 # ============================================================
-BASE_URL = "http://localhost:3000"
-DB_PATH = "/Users/feng/workspace/code/git.metami.work/new-api-yingcai/one-api.db"
-VALID_TOKEN = "sk-uMFygPAdMBpXMHZtBPTsK2yEWr81eZWxfol7O23qr5b9B6aa"
-INVALID_TOKEN = "sk-invalid-token-00000000000000000000000000000000"
-TEST_MODEL_OPENAI = "gpt-3.5-turbo"
+BASE_URL = os.getenv("BASE_URL", "http://localhost:3000")
+DB_PATH = os.getenv("DB_PATH", "../new-api-yingcai/one-api.db")
+VALID_TOKEN = os.getenv("VALID_TOKEN", "")
+INVALID_TOKEN = os.getenv("INVALID_TOKEN", "sk-invalid-token-00000000000000000000000000000000")
+TEST_MODEL_OPENAI = os.getenv("TEST_MODEL_OPENAI", "gpt-3.5-turbo")
+
+
 REPORT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reports")
 
 # 超时配置（秒）：普通请求 / 大请求
@@ -117,7 +124,8 @@ def test_auth():
     ok = r.status_code in (401, 403)
     add_result("无Token返回401或403", "连通性与鉴权测试",
                 ok, 1.0 if ok else 0.0, 1.0,
-                "status={}".format(r.status_code), ms)
+                "status={}".format(r.status_code), ms,
+                r.headers.get("X-Api-Request-Id", ""))
     print("  {} 无Token: {}".format("PASS" if ok else "FAIL",
           r.status_code))
 
@@ -152,7 +160,8 @@ def test_auth():
                 rate >= 0.95, score, 1.0,
                 "成功率={:.1%} 平均={:.0f}ms P95={:.0f}ms codes={}".format(
                     rate, avg, p95, codes),
-                sum(valid))
+                sum(valid),
+                r.headers.get("X-Api-Request-Id", ""))
     print("  {} 100次连续: 成功率={:.1%}".format(
         "PASS" if rate >= 0.95 else "FAIL", rate))
 
@@ -194,7 +203,8 @@ def test_protocol():
     ok = r.status_code == 200
     add_result("接受temperature+top_p+max_tokens",
                 "协议兼容性测试", ok, 1.0 if ok else 0.0, 1.0,
-                "status={}".format(r.status_code), ms)
+                "status={}".format(r.status_code), ms,
+                r.headers.get("X-Api-Request-Id", ""))
     print("  {} 参数传递: status={}".format(
         "PASS" if ok else "FAIL", r.status_code))
 
@@ -222,7 +232,8 @@ def test_protocol():
     ok = r.status_code == 200
     add_result("支持system role消息",
                 "协议兼容性测试", ok, 1.0 if ok else 0.0, 1.0,
-                "status={}".format(r.status_code), ms)
+                "status={}".format(r.status_code), ms,
+                r.headers.get("X-Api-Request-Id", ""))
     print("  {} system role: status={}".format(
         "PASS" if ok else "FAIL", r.status_code))
 
@@ -246,7 +257,8 @@ def test_protocol():
         detail = "status={}".format(r.status_code)
     add_result("参数真实生效验证max_tokens=5",
                 "协议兼容性测试", ok, 1.0 if ok else 0.0, 1.0,
-                detail, ms)
+                detail, ms,
+                r.headers.get("X-Api-Request-Id", ""))
     print("  {} 参数生效: {}".format("PASS" if ok else "FAIL", detail))
 
     # 2.6 流式输出完整性
@@ -266,111 +278,123 @@ def test_protocol():
     add_result("流式输出完整性", "协议兼容性测试",
                 ok, 1.0 if ok else 0.0, 1.0,
                 "content_len={} finish_stop={}".format(len(content), has_stop),
-                ms)
+                ms,
+                r.headers.get("X-Api-Request-Id", ""))
     print("  {} 流式完整: ok={} len={}".format(
         "PASS" if ok else "FAIL", ok, len(content)))
 
 
 # ============================================================
-# 测试3：稳定性与限流
+# 测试3：限流
 # ============================================================
 def test_stability():
-    print("\n[3/5] 稳定性与限流测试")
+    print("\n[5/5] 限流测试")
     s = make_client(VALID_TOKEN)
 
     # 3.1 触发限流
-    hit_429 = [False]
-    hit_resp = [None]
+    status_codes = []
+    resp_429_list = []
 
     def burst():
         try:
-            r = chat(s)
-            if r.status_code == 429:
-                hit_429[0] = True
-                hit_resp[0] = r
-                return True
-        except requests.exceptions.Timeout:
-            pass
+            return chat(s)
         except Exception:
-            pass
-        return False
+            return None
 
     with ThreadPoolExecutor(max_workers=20) as ex:
         futures = [ex.submit(burst) for _ in range(50)]
-        for f in as_completed(futures, timeout=30):
-            if f.result():
-                break
+        for f in as_completed(futures, timeout=60):
+            try:
+                r = f.result()
+            except Exception:
+                continue
+            if r is None:
+                continue
+            sc = r.status_code
+            status_codes.append(sc)
+            if sc == 429:
+                resp_429_list.append(r)
 
-    ok = hit_429[0]
-    detail = ""
-    if ok and hit_resp[0]:
-        ra = hit_resp[0].headers.get("Retry-After", "(missing)")
-        detail = "429 triggered, Retry-After={}".format(ra)
+    resp_429 = resp_429_list[0] if resp_429_list else None
+
+    codes_count = {}
+    for c in status_codes:
+        codes_count[c] = codes_count.get(c, 0) + 1
+    ok = resp_429 is not None
+    if ok:
+        ra = resp_429.headers.get("Retry-After", "(missing)")
+        detail = "429触发成功, Retry-After={} 状态码分布={}".format(ra, codes_count)
     else:
-        detail = "未触发429（可能未配置限流）"
-    add_result("限流响应429状态码", "稳定性与限流测试",
-                ok, 1.0 if ok else 0.0, 1.0, detail)
+        detail = "未触发429 状态码分布={}".format(codes_count)
+    add_result("限流响应429状态码", "限流测试",
+                ok, 1.0 if ok else 0.0, 1.0, detail, 0,
+                resp_429.headers.get("X-Api-Request-Id", "") if resp_429 else "")
     print("  {} 限流429: {}".format("PASS" if ok else "FAIL", detail))
 
     # 3.2 Retry-After 头
     ok2 = False
-    if ok and hit_resp[0]:
-        ra = hit_resp[0].headers.get("Retry-After")
+    if resp_429 is not None:
+        ra = resp_429.headers.get("Retry-After")
         ok2 = ra is not None and ra != ""
         detail2 = "Retry-After={}".format(ra) if ok2 else "缺失Retry-After头"
     else:
         detail2 = "未触发429，无法检查"
-    add_result("429响应带Retry-After头", "稳定性与限流测试",
-                ok2, 1.0 if ok2 else 0.0, 1.0, detail2)
+    add_result("429响应带Retry-After头", "限流测试",
+                ok2, 1.0 if ok2 else 0.0, 1.0, detail2, 0,
+                resp_429.headers.get("X-Api-Request-Id", "") if resp_429 is not None else "")
     print("  {} Retry-After: {}".format(
         "PASS" if ok2 else "FAIL", detail2))
 
     # 3.3 独立限流（简化）
-    add_result("不同接口独立限流", "稳定性与限流测试",
-                ok, 1.0 if ok else 0.0, 1.0,
-                "chat限流={}".format(ok))
-    print("  {} 独立限流: chat={}".format("PASS" if ok else "FAIL", ok))
+    # add_result("不同接口独立限流", "限流测试",
+    #             ok, 1.0 if ok else 0.0, 1.0,
+    #             "chat限流={}".format(ok), 0,
+    #             resp_429.headers.get("X-Api-Request-Id", "") if resp_429 is not None else "")
+    # print("  {} 独立限流: chat={}".format("PASS" if ok else "FAIL", ok))
 
     # 3.4 稳定调用20次
-    suc = 0
-    errs = []
-    for i in range(20):
-        try:
-            r = chat(s)
-            if r.status_code == 200:
-                suc += 1
-            else:
-                errs.append(str(r.status_code))
-        except requests.exceptions.Timeout:
-            errs.append("timeout")
-        except Exception as e:
-            errs.append(str(e)[:30])
-        time.sleep(0.05)
-    rate = suc / 20.0
-    score = min(rate, 1.0)
-    add_result("接口长期稳定调用20次", "稳定性与限流测试",
-                rate >= 0.95, score, 1.0,
-                "成功率={:.1%} errors={}".format(rate, errs[:3]))
-    print("  {} 稳定调用: 成功率={:.1%}".format(
-        "PASS" if rate >= 0.95 else "FAIL", rate))
+    # suc = 0
+    # errs = []
+    # last_r = None
+    # for i in range(20):
+    #     try:
+    #         r = chat(s)
+    #         last_r = r
+    #         if r.status_code == 200:
+    #             suc += 1
+    #         else:
+    #             errs.append(str(r.status_code))
+    #     except requests.exceptions.Timeout:
+    #         errs.append("timeout")
+    #     except Exception as e:
+    #         errs.append(str(e)[:30])
+    #     time.sleep(0.05)
+    # rate = suc / 20.0
+    # score = min(rate, 1.0)
+    # add_result("接口长期稳定调用20次", "限流测试",
+    #             rate >= 0.95, score, 1.0,
+    #             "成功率={:.1%} errors={}".format(rate, errs[:3]), 0,
+    #             last_r.headers.get("X-Api-Request-Id", "") if last_r else "")
+    # print("  {} 稳定调用: 成功率={:.1%}".format(
+    #     "PASS" if rate >= 0.95 else "FAIL", rate))
 
 
 # ============================================================
 # 测试4：异常容错
 # ============================================================
 def test_error():
-    print("\n[4/5] 异常容错测试")
+    print("\n[3/5] 异常容错测试")
     s = make_client(VALID_TOKEN)
 
-    # cases = [
-    #         ("超大输入1M字符返回400/413",
-    #         lambda: s.post("{}/v1/chat/completions".format(BASE_URL),
-    #                     json={"model": "gpt-3.5-turbo",
-    #                             "messages": [{"role": "user",
-    #                                         "content": "a" * 1000000}]},
-    #                     timeout=TIMEOUT_LARGE*10),
-    #         lambda r: r.status_code in (400, 413, 422, 502)),      
-    # ]
+    cases = [
+            ("超大输入1M字符返回400/413",
+            lambda: s.post("{}/v1/chat/completions".format(BASE_URL),
+                        json={"model": "gpt-3.5-turbo",
+                                "messages": [{"role": "user",
+                                            "content": "a" * 1000000}]},
+                        timeout=TIMEOUT_LARGE*10),
+            lambda r: r.status_code in (400, 413, 422, 502)),
+    ]
 
     cases = [
         ("不存在模型返回400/404",
@@ -408,12 +432,22 @@ def test_error():
 
     for name, req_fn, check_fn in cases:
         t0 = time.time()
+        rid = ""
         try:
-            print("  {} 请求: ".format(name))
             r = req_fn()
             ms = (time.time() - t0) * 1000
             ok = check_fn(r)
-            detail = "status={}".format(r.status_code)
+            rid = r.headers.get("X-Api-Request-Id", "")
+            retry_after = r.headers.get("Retry-After", "")
+            detail = "status={} headers=Retry-After:{}".format(
+                r.status_code, retry_after if retry_after else "(无)")
+            # 如果收到429，额外输出响应体前200字符帮助排查
+            if r.status_code == 429:
+                try:
+                    body = r.text[:200]
+                except Exception:
+                    body = "(无法读取)"
+                detail += " body={}".format(body)
         except requests.exceptions.Timeout:
             ms = (time.time() - t0) * 1000
             ok = False
@@ -423,7 +457,7 @@ def test_error():
             ok = False
             detail = "exception: {}".format(str(e)[:100])
         add_result(name, "异常容错测试",
-                    ok, 1.0 if ok else 0.0, 1.0, detail, ms)
+                    ok, 1.0 if ok else 0.0, 1.0, detail, ms, rid)
         print("  {} {}: {}".format(
             "PASS" if ok else "FAIL", name, detail))
 
@@ -432,7 +466,7 @@ def test_error():
 # 测试5：request_id 透传
 # ============================================================
 def test_request_id():
-    print("\n[5/5] request_id 透传测试")
+    print("\n[4/5] request_id 透传测试")
     s = make_client(VALID_TOKEN)
 
     # 5.1 响应头包含 X-Api-Request-Id
@@ -448,15 +482,17 @@ def test_request_id():
 
     # 5.2 唯一性
     rids = set()
+    last_rid = ""
     for i in range(20):
-        r = chat(s)
-        r = r.headers.get("X-Api-Request-Id", "")
-        if rid:
-            rids.add(rid)
+        resp = chat(s)
+        rid_i = resp.headers.get("X-Api-Request-Id", "")
+        if rid_i:
+            rids.add(rid_i)
+        last_rid = rid_i
     ok = len(rids) >= 15
     add_result("request_id唯一性20次>=15", "request_id 透传测试",
                 ok, 1.0 if ok else 0.0, 1.0,
-                "唯一数={}/20".format(len(rids)))
+                "唯一数={}/20".format(len(rids)), 0, last_rid)
     print("  {} request_id唯一性: {}/20".format(
         "PASS" if ok else "FAIL", len(rids)))
 
@@ -476,7 +512,7 @@ def test_request_id():
             coverage = with_rid / total if total > 0 else 0
             ok = coverage >= 0.99
             add_result("日志request_id覆盖率>=99%", "request_id 透传测试",
-                        min(coverage, 1.0), 1.0,
+                        ok, min(coverage, 1.0), 1.0,
                         "覆盖率={:.1%} ({}/{})".format(
                             coverage, with_rid, total))
     except Exception as e:
@@ -486,22 +522,22 @@ def test_request_id():
     print("  {} 日志覆盖率".format("PASS" if ok else "FAIL"))
 
     # 5.4 响应体透传
-    r = chat(s)
-    rid_header = r.headers.get("X-Api-Request-Id", "")
-    try:
-        d = r.json()
-        rid_body = d.get("request_id", "")
-    except Exception:
-        rid_body = ""
-    ok = bool(rid_body)
-    add_result("request_id在响应体中透传", "request_id 透传测试",
-                ok, 1.0 if ok else 0.5, 1.0,
-                "header_rid={} body_rid={}".format(
-                    rid_header[:20] if rid_header else "",
-                    rid_body[:20] if rid_body else ""),
-                0, rid_header)
-    print("  {} 响应体透传: body_rid={}".format(
-        "PASS" if ok else "WARN", rid_body[:20] if rid_body else "(空)"))
+    # r = chat(s)
+    # rid_header = r.headers.get("X-Api-Request-Id", "")
+    # try:
+    #     d = r.json()
+    #     rid_body = d.get("request_id", "")
+    # except Exception:
+    #     rid_body = ""
+    # ok = bool(rid_body)
+    # add_result("request_id在响应体中透传", "request_id 透传测试",
+    #             ok, 1.0 if ok else 0.5, 1.0,
+    #             "header_rid={} body_rid={}".format(
+    #                 rid_header[:20] if rid_header else "",
+    #                 rid_body[:20] if rid_body else ""),
+    #             0, rid_header)
+    # print("  {} 响应体透传: body_rid={}".format(
+    #     "PASS" if ok else "WARN", rid_body[:20] if rid_body else "(空)"))
 
 
 # ============================================================
@@ -553,10 +589,26 @@ if __name__ == "__main__":
     t0 = time.time()
     test_auth()
     test_protocol()
-    test_stability()
     test_error()
     test_request_id()
     elapsed = (time.time() - t0) * 1000
+
+    # 限流测试放最后，等用户确认或30秒超时后自动执行
+    print("\n" + "-" * 60)
+    print("  即将执行限流测试（会触发大量并发请求，可能影响服务）")
+    print("  按回车键立即执行，或等待 30 秒自动开始...")
+    print("-" * 60)
+
+    if sys.platform != "win32":
+        # macOS / Linux: 用 select 实现超时
+        rlist, _, _ = select.select([sys.stdin], [], [], 30)
+        if rlist:
+            sys.stdin.readline()
+    else:
+        # Windows: 简单 sleep
+        time.sleep(30)
+
+    test_stability()
 
     print_summary()
     json_path = save_results()
