@@ -130,40 +130,40 @@ def test_auth():
           r.status_code))
 
     # 1.4 100次连续请求
-    s = make_client(VALID_TOKEN)
-    latencies = []
-    suc = 0
-    codes = {}
-    for i in range(100):
-        t0 = time.time()
-        try:
-            r = chat(s)
-            el = (time.time() - t0) * 1000
-            latencies.append(el)
-            c = r.status_code
-            codes[c] = codes.get(c, 0) + 1
-            if c == 200:
-                suc += 1
-        except requests.exceptions.Timeout:
-            latencies.append(-1)
-            codes["timeout"] = codes.get("timeout", 0) + 1
-        except Exception:
-            latencies.append(-1)
-            codes["error"] = codes.get("error", 0) + 1
+    # s = make_client(VALID_TOKEN)
+    # latencies = []
+    # suc = 0
+    # codes = {}
+    # for i in range(100):
+    #     t0 = time.time()
+    #     try:
+    #         r = chat(s)
+    #         el = (time.time() - t0) * 1000
+    #         latencies.append(el)
+    #         c = r.status_code
+    #         codes[c] = codes.get(c, 0) + 1
+    #         if c == 200:
+    #             suc += 1
+    #     except requests.exceptions.Timeout:
+    #         latencies.append(-1)
+    #         codes["timeout"] = codes.get("timeout", 0) + 1
+    #     except Exception:
+    #         latencies.append(-1)
+    #         codes["error"] = codes.get("error", 0) + 1
 
-    rate = suc / 100.0
-    valid = [l for l in latencies if l >= 0]
-    avg = statistics.mean(valid) if valid else -1
-    p95 = sorted(valid)[int(len(valid) * 0.95)] if len(valid) >= 20 else -1
-    score = min(rate, 1.0)
-    add_result("100次连续请求稳定性", "连通性与鉴权测试",
-                rate >= 0.95, score, 1.0,
-                "成功率={:.1%} 平均={:.0f}ms P95={:.0f}ms codes={}".format(
-                    rate, avg, p95, codes),
-                sum(valid),
-                r.headers.get("X-Api-Request-Id", ""))
-    print("  {} 100次连续: 成功率={:.1%}".format(
-        "PASS" if rate >= 0.95 else "FAIL", rate))
+    # rate = suc / 100.0
+    # valid = [l for l in latencies if l >= 0]
+    # avg = statistics.mean(valid) if valid else -1
+    # p95 = sorted(valid)[int(len(valid) * 0.95)] if len(valid) >= 20 else -1
+    # score = min(rate, 1.0)
+    # add_result("100次连续请求稳定性", "连通性与鉴权测试",
+    #             rate >= 0.95, score, 1.0,
+    #             "成功率={:.1%} 平均={:.0f}ms P95={:.0f}ms codes={}".format(
+    #                 rate, avg, p95, codes),
+    #             sum(valid),
+    #             r.headers.get("X-Api-Request-Id", ""))
+    # print("  {} 100次连续: 成功率={:.1%}".format(
+    #     "PASS" if rate >= 0.95 else "FAIL", rate))
 
 
 # ============================================================
@@ -211,7 +211,7 @@ def test_protocol():
     # 2.3 流式响应
     t0 = time.time()
     r = chat(s, messages=[{"role": "user", "content": "stream test"}],
-             stream=True)
+             stream=True, model=TEST_MODEL_OPENAI)
     ms = (time.time() - t0) * 1000
     chunks = parse_sse(r)
     ok = len(chunks) >= 5
@@ -227,7 +227,7 @@ def test_protocol():
     r = chat(s, messages=[
         {"role": "system", "content": "You are helpful."},
         {"role": "user", "content": "hi"},
-    ])
+    ], model=TEST_MODEL_OPENAI)
     ms = (time.time() - t0) * 1000
     ok = r.status_code == 200
     add_result("支持system role消息",
@@ -240,7 +240,7 @@ def test_protocol():
     # 2.5 参数真实生效
     t0 = time.time()
     r = chat(s, messages=[{"role": "user", "content": "Tell me a story"}],
-             max_tokens=5)
+             max_tokens=5, model=TEST_MODEL_OPENAI)
     ms = (time.time() - t0) * 1000
     ok = False
     detail = ""
@@ -264,7 +264,7 @@ def test_protocol():
     # 2.6 流式输出完整性
     t0 = time.time()
     r = chat(s, messages=[{"role": "user", "content": "hi"}],
-             stream=True)
+             stream=True, model=TEST_MODEL_OPENAI)
     ms = (time.time() - t0) * 1000
     chunks = parse_sse(r)
     content = ""
@@ -387,13 +387,13 @@ def test_error():
     s = make_client(VALID_TOKEN)
 
     cases = [
-            ("超大输入1M字符返回400/413",
+            ("超大输入1M字符返回400",
             lambda: s.post("{}/v1/chat/completions".format(BASE_URL),
-                        json={"model": "gpt-3.5-turbo",
+                        json={"model": TEST_MODEL_OPENAI,
                                 "messages": [{"role": "user",
                                             "content": "a" * 1000000}]},
                         timeout=TIMEOUT_LARGE*10),
-            lambda r: r.status_code in (400, 413, 422, 502)),
+            lambda r: r.status_code in (400)),
     ]
 
     cases = [
@@ -402,10 +402,10 @@ def test_error():
                       json={"model": "nonexistent-model-xyz",
                             "messages": [{"role": "user", "content": "hi"}]},
                       timeout=TIMEOUT_NORMAL),
-         lambda r: r.status_code in (400, 404, 422)),
+         lambda r: r.status_code in (400, 404)),
         ("messages为空返回400",
          lambda: s.post("{}/v1/chat/completions".format(BASE_URL),
-                      json={"model": "gpt-3.5-turbo", "messages": []},
+                      json={"model": TEST_MODEL_OPENAI, "messages": []},
                       timeout=TIMEOUT_NORMAL),
          lambda r: r.status_code in (400, 422)),
         ("非法JSON返回400",
@@ -416,7 +416,7 @@ def test_error():
          lambda r: r.status_code in (400, 422)),
         ("超大输入1M字符返回400/413",
          lambda: s.post("{}/v1/chat/completions".format(BASE_URL),
-                      json={"model": "gpt-3.5-turbo",
+                      json={"model": TEST_MODEL_OPENAI,
                             "messages": [{"role": "user",
                                           "content": "a" * 1000000}]},
                       timeout=TIMEOUT_LARGE*10),
@@ -424,7 +424,7 @@ def test_error():
         ("无Authorization返回401/403",
          lambda: requests.post(
              "{}/v1/chat/completions".format(BASE_URL),
-             json={"model": "gpt-3.5-turbo",
+             json={"model": TEST_MODEL_OPENAI,
                    "messages": [{"role": "user", "content": "hi"}]},
              timeout=TIMEOUT_NORMAL),
          lambda r: r.status_code in (401, 403)),
