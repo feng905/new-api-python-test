@@ -19,7 +19,7 @@ load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 # 配置（从环境变量 / .env 文件读取）
 # ============================================================
 BASE_URL = os.getenv("BASE_URL", "http://localhost:3000")
-DB_PATH = os.getenv("DB_PATH", "../new-api-yingcai/one-api.db")
+DB_PATH = os.getenv("DB_PATH", "../new-api/one-api.db")
 VALID_TOKEN = os.getenv("VALID_TOKEN", "")
 INVALID_TOKEN = os.getenv("INVALID_TOKEN", "sk-invalid-token-00000000000000000000000000000000")
 TEST_MODEL_OPENAI = os.getenv("TEST_MODEL_OPENAI", "gpt-3.5-turbo")
