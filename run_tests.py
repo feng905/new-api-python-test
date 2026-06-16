@@ -68,6 +68,19 @@ def chat(s, messages=None, stream=False, **kwargs):
                   json=payload, stream=stream, timeout=TIMEOUT_NORMAL)
 
 
+def safe_chat(s, **kwargs):
+    """调用 chat()，把超时/网络异常转成 (response_or_None, error_str)。
+
+    这样单个请求超时不会让整个测试套件崩溃。
+    """
+    try:
+        return chat(s, **kwargs), None
+    except requests.exceptions.Timeout:
+        return None, "请求超时(timeout={}s)".format(TIMEOUT_NORMAL)
+    except requests.exceptions.RequestException as e:
+        return None, "请求异常: {}".format(str(e)[:100])
+
+
 def parse_sse(r):
     chunks = []
     for line in r.iter_lines(decode_unicode=True):
@@ -92,42 +105,42 @@ def test_auth():
 
     # 1.1 有效 token
     t0 = time.time()
-    r = chat(s)
+    r, err = safe_chat(s)
     ms = (time.time() - t0) * 1000
-    ok = r.status_code == 200
+    ok = r is not None and r.status_code == 200
     add_result("有效Token返回200", "连通性与鉴权测试",
                 ok, 1.0 if ok else 0.0, 1.0,
-                "status={}".format(r.status_code), ms,
-                r.headers.get("X-Api-Request-Id", ""))
+                "status={}".format(r.status_code) if r is not None else err, ms,
+                r.headers.get("X-Api-Request-Id", "") if r is not None else "")
     print("  {} 有效Token: {}".format("PASS" if ok else "FAIL",
-          r.status_code))
+          r.status_code if r is not None else err))
 
     # 1.2 无效 token
     s2 = make_client(INVALID_TOKEN)
     t0 = time.time()
-    r = chat(s2)
+    r, err = safe_chat(s2)
     ms = (time.time() - t0) * 1000
-    ok = r.status_code == 401
+    ok = r is not None and r.status_code == 401
     add_result("无效Token返回401", "连通性与鉴权测试",
                 ok, 1.0 if ok else 0.0, 1.0,
-                "status={}".format(r.status_code), ms,
-                r.headers.get("X-Api-Request-Id", ""))
+                "status={}".format(r.status_code) if r is not None else err, ms,
+                r.headers.get("X-Api-Request-Id", "") if r is not None else "")
     print("  {} 无效Token: {}".format("PASS" if ok else "FAIL",
-          r.status_code))
+          r.status_code if r is not None else err))
 
     # 1.3 无 token
     s3 = make_client("")
     s3.headers.pop("Authorization", None)
     t0 = time.time()
-    r = chat(s3)
+    r, err = safe_chat(s3)
     ms = (time.time() - t0) * 1000
-    ok = r.status_code in (401, 403)
+    ok = r is not None and r.status_code in (401, 403)
     add_result("无Token返回401或403", "连通性与鉴权测试",
                 ok, 1.0 if ok else 0.0, 1.0,
-                "status={}".format(r.status_code), ms,
-                r.headers.get("X-Api-Request-Id", ""))
+                "status={}".format(r.status_code) if r is not None else err, ms,
+                r.headers.get("X-Api-Request-Id", "") if r is not None else "")
     print("  {} 无Token: {}".format("PASS" if ok else "FAIL",
-          r.status_code))
+          r.status_code if r is not None else err))
 
     # 1.4 100次连续请求
     # s = make_client(VALID_TOKEN)
@@ -175,11 +188,13 @@ def test_protocol():
 
     # 2.1 基础 chat
     t0 = time.time()
-    r = chat(s, messages=[{"role": "user", "content": "say hi"}])
+    r, err = safe_chat(s, messages=[{"role": "user", "content": "say hi"}])
     ms = (time.time() - t0) * 1000
     ok = False
     detail = ""
-    if r.status_code == 200:
+    if r is None:
+        detail = err
+    elif r.status_code == 200:
         try:
             d = r.json()
             content = d["choices"][0]["message"]["content"]
@@ -192,81 +207,102 @@ def test_protocol():
     add_result("基础chat返回choices[0].message.content",
                 "协议兼容性测试", ok, 1.0 if ok else 0.0, 1.0,
                 detail, ms,
-                r.headers.get("X-Api-Request-Id", ""))
+                r.headers.get("X-Api-Request-Id", "") if r is not None else "")
     print("  {} 基础chat: {}".format("PASS" if ok else "FAIL", detail))
 
     # 2.2 参数传递
     t0 = time.time()
-    r = chat(s, messages=[{"role": "user", "content": "hi"}],
-             temperature=0.5, top_p=0.8, max_tokens=50)
+    r, err = safe_chat(s, messages=[{"role": "user", "content": "hi"}],
+                       temperature=0.5, top_p=0.8, max_tokens=50)
     ms = (time.time() - t0) * 1000
-    ok = r.status_code == 200
+    ok = r is not None and r.status_code == 200
     add_result("接受temperature+top_p+max_tokens",
                 "协议兼容性测试", ok, 1.0 if ok else 0.0, 1.0,
-                "status={}".format(r.status_code), ms,
-                r.headers.get("X-Api-Request-Id", ""))
+                "status={}".format(r.status_code) if r is not None else err, ms,
+                r.headers.get("X-Api-Request-Id", "") if r is not None else "")
     print("  {} 参数传递: status={}".format(
-        "PASS" if ok else "FAIL", r.status_code))
+        "PASS" if ok else "FAIL", r.status_code if r is not None else err))
 
     # 2.3 流式响应
     t0 = time.time()
-    r = chat(s, messages=[{"role": "user", "content": "stream test"}],
-             stream=True, model=TEST_MODEL_OPENAI)
+    r, err = safe_chat(s, messages=[{"role": "user", "content": "stream test"}],
+                       stream=True, model=TEST_MODEL_OPENAI)
+    chunks = []
+    if r is not None:
+        try:
+            chunks = parse_sse(r)
+        except requests.exceptions.RequestException as e:
+            err = "流式读取异常: {}".format(str(e)[:100])
     ms = (time.time() - t0) * 1000
-    chunks = parse_sse(r)
     ok = len(chunks) >= 5
     add_result("流式响应stream=true返回>=5块",
                 "协议兼容性测试", ok, 1.0 if ok else 0.0, 1.0,
-                "chunks={}".format(len(chunks)), ms,
-                r.headers.get("X-Api-Request-Id", ""))
+                "chunks={}".format(len(chunks)) if r is not None else err, ms,
+                r.headers.get("X-Api-Request-Id", "") if r is not None else "")
     print("  {} 流式响应: chunks={}".format(
         "PASS" if ok else "FAIL", len(chunks)))
 
     # 2.4 system role
     t0 = time.time()
-    r = chat(s, messages=[
+    r, err = safe_chat(s, messages=[
         {"role": "system", "content": "You are helpful."},
         {"role": "user", "content": "hi"},
     ], model=TEST_MODEL_OPENAI)
     ms = (time.time() - t0) * 1000
-    ok = r.status_code == 200
+    ok = r is not None and r.status_code == 200
     add_result("支持system role消息",
                 "协议兼容性测试", ok, 1.0 if ok else 0.0, 1.0,
-                "status={}".format(r.status_code), ms,
-                r.headers.get("X-Api-Request-Id", ""))
+                "status={}".format(r.status_code) if r is not None else err, ms,
+                r.headers.get("X-Api-Request-Id", "") if r is not None else "")
     print("  {} system role: status={}".format(
-        "PASS" if ok else "FAIL", r.status_code))
+        "PASS" if ok else "FAIL", r.status_code if r is not None else err))
 
     # 2.5 参数真实生效
+    # 用 finish_reason=="length" 判断 max_tokens 是否真正生效，而不是数 completion_tokens。
+    # 原因：推理类模型(如 qwen3.x-max)的 completion_tokens 含内部思考 token，
+    # 即使截断也可能远大于上限；finish_reason=length 才是“被 token 上限截断”的准确信号。
+    # 同时附带 max_completion_tokens（推理模型只认这个参数，max_tokens 已被部分模型废弃）。
+    cap = 16
     t0 = time.time()
-    r = chat(s, messages=[{"role": "user", "content": "Tell me a story"}],
-             max_tokens=5, model=TEST_MODEL_OPENAI)
+    r, err = safe_chat(s, messages=[{"role": "user", "content": "Tell me a long story"}],
+                       max_tokens=cap, max_completion_tokens=cap,
+                       model=TEST_MODEL_OPENAI)
     ms = (time.time() - t0) * 1000
     ok = False
     detail = ""
-    if r.status_code == 200:
+    if r is None:
+        detail = err
+    elif r.status_code == 200:
         try:
             d = r.json()
+            choice = (d.get("choices") or [{}])[0]
+            finish = choice.get("finish_reason")
             usage = d.get("usage", {})
-            tokens = usage.get("completion_tokens", 999)
-            ok = tokens <= 10
-            detail = "completion_tokens={}".format(tokens)
+            tokens = usage.get("completion_tokens", "?")
+            ok = finish == "length"
+            detail = "finish_reason={} completion_tokens={} (cap={})".format(
+                finish, tokens, cap)
         except Exception as e:
             detail = "parse error: {}".format(e)
     else:
         detail = "status={}".format(r.status_code)
-    add_result("参数真实生效验证max_tokens=5",
+    add_result("参数真实生效验证max_tokens截断(finish_reason=length)",
                 "协议兼容性测试", ok, 1.0 if ok else 0.0, 1.0,
                 detail, ms,
-                r.headers.get("X-Api-Request-Id", ""))
+                r.headers.get("X-Api-Request-Id", "") if r is not None else "")
     print("  {} 参数生效: {}".format("PASS" if ok else "FAIL", detail))
 
     # 2.6 流式输出完整性
     t0 = time.time()
-    r = chat(s, messages=[{"role": "user", "content": "hi"}],
-             stream=True, model=TEST_MODEL_OPENAI)
+    r, err = safe_chat(s, messages=[{"role": "user", "content": "hi"}],
+                       stream=True, model=TEST_MODEL_OPENAI)
+    chunks = []
+    if r is not None:
+        try:
+            chunks = parse_sse(r)
+        except requests.exceptions.RequestException as e:
+            err = "流式读取异常: {}".format(str(e)[:100])
     ms = (time.time() - t0) * 1000
-    chunks = parse_sse(r)
     content = ""
     has_stop = False
     for c in chunks:
@@ -277,9 +313,10 @@ def test_protocol():
     ok = len(content) > 0 and has_stop
     add_result("流式输出完整性", "协议兼容性测试",
                 ok, 1.0 if ok else 0.0, 1.0,
-                "content_len={} finish_stop={}".format(len(content), has_stop),
+                "content_len={} finish_stop={}".format(len(content), has_stop)
+                if r is not None else err,
                 ms,
-                r.headers.get("X-Api-Request-Id", ""))
+                r.headers.get("X-Api-Request-Id", "") if r is not None else "")
     print("  {} 流式完整: ok={} len={}".format(
         "PASS" if ok else "FAIL", ok, len(content)))
 
@@ -609,10 +646,13 @@ if __name__ == "__main__":
     print("=" * 60)
 
     t0 = time.time()
-    test_auth()
-    test_protocol()
-    test_error()
-    test_request_id()
+    try:
+        test_auth()
+        test_protocol()
+        test_error()
+        test_request_id()
+    except Exception as e:
+        print("\n!! 测试过程中出现未预期异常，已捕获以保留已完成结果：{}".format(e))
     elapsed = (time.time() - t0) * 1000
 
     # 限流测试放最后，等用户确认或30秒超时后自动执行
@@ -630,7 +670,10 @@ if __name__ == "__main__":
         # Windows: 简单 sleep
         time.sleep(30)
 
-    test_stability()
+    try:
+        test_stability()
+    except Exception as e:
+        print("\n!! 限流测试出现未预期异常，已捕获：{}".format(e))
 
     print_summary()
     json_path = save_results()
