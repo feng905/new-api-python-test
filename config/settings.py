@@ -5,7 +5,7 @@ BASE_URL = "http://localhost:3000"
 API_PREFIX = "/v1"
 
 # 数据库路径（用于查询测试数据）
-DB_PATH = "/Users/feng/workspace/code/git.metami.work/new-api-yingcai/one-api.db"
+DB_PATH = "../new-api/one-api.db"
 
 # 管理员凭证
 ADMIN_ACCESS_TOKEN = "BBwrju4oo3pvMsDJWOfnLWwkbTMoWhQ="
@@ -29,4 +29,4 @@ RATE_LIMIT_MAX_REQUESTS = 50
 RATE_LIMIT_WINDOW_SEC = 60
 
 # 报告输出
-REPORT_DIR = "/Users/feng/workspace/code/git.metami.work/new-api-autotest/reports"
+REPORT_DIR = "./reports"

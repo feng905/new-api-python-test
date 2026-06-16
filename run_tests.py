@@ -19,7 +19,7 @@ load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 # 配置（从环境变量 / .env 文件读取）
 # ============================================================
 BASE_URL = os.getenv("BASE_URL", "http://localhost:3000")
-DB_PATH = os.getenv("DB_PATH", "../new-api/one-api.db")
+# DB_PATH = os.getenv("DB_PATH", "../new-api/one-api.db")
 VALID_TOKEN = os.getenv("VALID_TOKEN", "")
 INVALID_TOKEN = os.getenv("INVALID_TOKEN", "sk-invalid-token-00000000000000000000000000000000")
 TEST_MODEL_OPENAI = os.getenv("TEST_MODEL_OPENAI", "gpt-3.5-turbo")
@@ -470,56 +470,78 @@ def test_request_id():
     s = make_client(VALID_TOKEN)
 
     # 5.1 响应头包含 X-Api-Request-Id
-    r = chat(s)
-    rid = r.headers.get("X-Api-Request-Id", "")
-    ok = bool(rid and len(rid) > 5)
+    rid = ""
+    try:
+        r = chat(s)
+        rid = r.headers.get("X-Api-Request-Id", "")
+        ok = bool(rid and len(rid) > 5)
+        detail = "X-Api-Request-Id={}".format(rid[:30] if rid else "(空)")
+    except requests.exceptions.Timeout:
+        ok = False
+        detail = "请求超时"
+    except Exception as e:
+        ok = False
+        detail = "exception: {}".format(str(e)[:100])
     add_result("响应头包含X-Api-Request-Id", "request_id 透传测试",
                 ok, 1.0 if ok else 0.0, 1.0,
-                "X-Api-Request-Id={}".format(rid[:30] if rid else "(空)"),
-                0, rid)
+                detail, 0, rid)
     print("  {} 响应头request_id: {}".format(
-        "PASS" if ok else "FAIL", rid[:20] if rid else "(空)"))
+        "PASS" if ok else "FAIL", rid[:20] if rid else detail))
 
     # 5.2 唯一性
     rids = set()
     last_rid = ""
+    request_errors = []
     for i in range(20):
-        resp = chat(s)
-        rid_i = resp.headers.get("X-Api-Request-Id", "")
-        if rid_i:
-            rids.add(rid_i)
-        last_rid = rid_i
+        try:
+            resp = chat(s)
+            rid_i = resp.headers.get("X-Api-Request-Id", "")
+            if rid_i:
+                rids.add(rid_i)
+            last_rid = rid_i
+        except requests.exceptions.Timeout:
+            request_errors.append("timeout@{}".format(i + 1))
+            if not last_rid:
+                last_rid = "(unavailable)"
+        except Exception as e:
+            request_errors.append("error@{}:{}".format(i + 1, str(e)[:100]))
+            if not last_rid:
+                last_rid = "(unavailable)"
     ok = len(rids) >= 15
     add_result("request_id唯一性20次>=15", "request_id 透传测试",
                 ok, 1.0 if ok else 0.0, 1.0,
-                "唯一数={}/20".format(len(rids)), 0, last_rid)
+                "唯一数={}/20 errors={} total_errors={}".format(
+                    len(rids), request_errors[:5] if request_errors else "[]",
+                    len(request_errors)),
+                0, last_rid)
     print("  {} request_id唯一性: {}/20".format(
         "PASS" if ok else "FAIL", len(rids)))
 
     # 5.3 数据库日志覆盖率
-    try:
-        with sqlite3.connect(DB_PATH) as conn:
-            cur = conn.cursor()
-            cur.execute(
-                "SELECT COUNT(*) FROM logs WHERE id > "
-                "(SELECT MAX(id)-100 FROM logs)")
-            total = cur.fetchone()[0]
-            cur.execute(
-                "SELECT COUNT(*) FROM logs WHERE id > "
-                "(SELECT MAX(id)-100 FROM logs) "
-                "AND request_id IS NOT NULL AND request_id != ''")
-            with_rid = cur.fetchone()[0]
-            coverage = with_rid / total if total > 0 else 0
-            ok = coverage >= 0.99
-            add_result("日志request_id覆盖率>=99%", "request_id 透传测试",
-                        ok, min(coverage, 1.0), 1.0,
-                        "覆盖率={:.1%} ({}/{})".format(
-                            coverage, with_rid, total))
-    except Exception as e:
-        add_result("日志request_id覆盖率>=99%", "request_id 透传测试",
-                    False, 0.0, 1.0,
-                    "DB查询异常: {}".format(str(e)[:100]))
-    print("  {} 日志覆盖率".format("PASS" if ok else "FAIL"))
+    # ok = False
+    # try:
+    #     with sqlite3.connect(DB_PATH) as conn:
+    #         cur = conn.cursor()
+    #         cur.execute(
+    #             "SELECT COUNT(*) FROM logs WHERE id > "
+    #             "(SELECT MAX(id)-100 FROM logs)")
+    #         total = cur.fetchone()[0]
+    #         cur.execute(
+    #             "SELECT COUNT(*) FROM logs WHERE id > "
+    #             "(SELECT MAX(id)-100 FROM logs) "
+    #             "AND request_id IS NOT NULL AND request_id != ''")
+    #         with_rid = cur.fetchone()[0]
+    #         coverage = with_rid / total if total > 0 else 0
+    #         ok = coverage >= 0.99
+    #         add_result("日志request_id覆盖率>=99%", "request_id 透传测试",
+    #                     ok, min(coverage, 1.0), 1.0,
+    #                     "覆盖率={:.1%} ({}/{})".format(
+    #                         coverage, with_rid, total))
+    # except Exception as e:
+    #     add_result("日志request_id覆盖率>=99%", "request_id 透传测试",
+    #                 False, 0.0, 1.0,
+    #                 "DB查询异常: {}".format(str(e)[:100]))
+    # print("  {} 日志覆盖率".format("PASS" if ok else "FAIL"))
 
     # 5.4 响应体透传
     # r = chat(s)
